@@ -1,0 +1,337 @@
+#include "FPS_GT511C3.h"
+#include "SoftwareSerial.h"
+#include <Servo.h>
+#include "Keypad.h"
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <Password.h>
+
+
+
+
+#include <SPI.h>
+#include <Adafruit_PN532.h>
+
+#define PN532_IRQ   (6)
+#define PN532_RESET (3)  // Not connected by default on the NFC Shield
+
+// Or use this line for a breakout or shield with an I2C connection:
+Adafruit_PN532 nfc(PN532_IRQ, PN532_RESET);
+
+#if defined(ARDUINO_ARCH_SAMD)
+// for Zero, output on USB Serial console, remove line below if using programming port to program the Zero!
+// also change #define in Adafruit_PN532.cpp library file
+   #define Serial SerialUSB
+#endif
+
+
+ //Password
+Password password = Password( "1234" ); //password to unlock, can be changed
+ 
+
+//boolean
+bool nm = false;
+bool kp = false;
+bool fn = false;
+bool dp = false;
+
+
+//keypad section
+
+const byte ROWS = 4; // number of rows
+const byte COLS = 3; // number of columns
+char keys[ROWS][COLS] = {
+  {'1', '2', '3'},
+  {'4', '5', '6'},
+  {'7', '8', '9'},
+  {'*', '0', '#'}
+};
+
+byte rowPins[ROWS] = {10, 9, 8, 7}; // row pinouts of the keypad R1 = D8, R2 = D7, R3 = D6, R4 = D5
+byte colPins[COLS] = {5, 4, 2};    // column pinouts of the keypad C1 = D4, C2 = D3, C3 = D2
+Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
+
+//FPS Section
+
+FPS_GT511C3 fps(12, 13);
+
+//Servo section
+
+Servo myservo;  // create servo object to control a servo
+// a maximum of eight servo objects can be created
+
+//Liquid crystal display
+
+LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
+
+
+void setup() {
+  #ifndef ESP8266
+    while (!Serial); // for Leonardo/Micro/Zero
+  #endif
+  Serial.begin(9600);
+  Serial.println("Hello!");
+
+  nfc.begin();
+
+  uint32_t versiondata = nfc.getFirmwareVersion();
+  if (! versiondata) {
+    Serial.print("Didn't find PN53x board");
+    while (1); // halt
+  }
+  
+  // Got ok data, print it out!
+  Serial.print("Found chip PN5"); Serial.println((versiondata>>24) & 0xFF, HEX); 
+  Serial.print("Firmware ver. "); Serial.print((versiondata>>16) & 0xFF, DEC); 
+  Serial.print('.'); Serial.println((versiondata>>8) & 0xFF, DEC);
+  
+  // Set the max number of retry attempts to read from a card
+  // This prevents us from waiting forever for a card, which is
+  // the default behaviour of the PN532.
+  nfc.setPassiveActivationRetries(0xFF);
+  
+  // configure board to read RFID tags
+  nfc.SAMConfig();
+  
+  Serial.println("Waiting for an ISO14443A card");
+
+
+  //keypad/Password
+
+  Serial.begin(9600);
+  Serial.write(254);
+  Serial.write(0x01);
+  delay(200); 
+
+  keypad.addEventListener(keypadEvent); //add an event listener for this keypad
+
+  //FPS
+
+  delay(100);
+  fps.Open();
+  fps.SetLED(true);
+
+  //Servo
+  myservo.attach(11);  // attaches the servo on pin 9 to the servo object
+
+  //Liquid crystal display
+  lcd.begin(16, 2);
+
+  //Password
+  
+}
+
+void loop() {
+
+
+///////////NEW CODE
+
+char key = keypad.getKey();
+if (nm == false){
+  lcd.print("Enter: ");
+  delay(200);
+  lcd.clear();
+}
+
+
+    if (kp == true && fps.IsPressFinger())
+  {
+     dp = true;
+     checkFinger();
+  }
+
+    if (kp == true && dp == false){
+      //Serial.print("Press Finger");
+      //Serial.write(254);
+      //delay(1000);
+
+      lcd.print("Press Finger");
+      delay(200);
+      lcd.clear();
+      
+    }
+    
+
+   //if (kp == false && dp == false){
+    //  Serial.print("Press Keypad");
+   // }
+}
+
+///////////////////////////////////////////////////////////////
+//Functions
+
+void unlock () {
+  myservo.write(180);
+}
+
+void lock () {
+  myservo.write(90);
+}
+
+void checkPassword(){
+  
+if (password.evaluate() && kp == false){  //if password is right open
+    
+    Serial.println("Accepted");
+    Serial.write(254);delay(1000);
+
+    lcd.print("Accepted");
+      delay(1000);
+      lcd.clear();
+    
+    kp = true;
+    //fn = true;
+    //dp = true;
+    
+}else if (kp == false){
+    Serial.println("Denied"); //if passwords wrong keep locked
+    Serial.write(254);delay(100);
+
+    lcd.print("Denied");
+      delay(1000);
+      lcd.clear();
+    //add code to run if it did not work
+    
+    
+}
+}
+
+void checkFinger(){
+   {
+
+    fps.CaptureFinger(false);
+    int id = fps.Identify1_N();
+
+    if (id < 200)
+    {
+      fn = true;
+      Serial.print("Verified ID:");
+      Serial.println(id);
+
+      lcd.print("Verified ID:");
+      lcd.print(id);
+      delay(3000);
+      lcd.clear();
+
+     RFID();
+
+    
+  }
+  else if (kp == true && dp == true && fn == false) {
+      Serial.println("Finger not found");
+      Serial.write(254); delay(200);
+ 
+      lcd.print("Finger not found");
+      delay(1000);
+      lcd.clear();
+      kp = false;
+      dp = false;
+      fn = false;
+      nm = false;
+
+    }
+}
+}
+
+void keypadEvent(KeypadEvent eKey){
+  switch (keypad.getState()){
+  
+  case PRESSED:
+  
+  nm = true;
+
+  lcd.print("*");
+      delay(1000);
+      
+  Serial.print("Enter:");
+  Serial.println(eKey);
+  delay(10);
+  
+  Serial.write(254);
+  
+  switch (eKey){
+    case '*': lcd.clear(); checkPassword(); delay(1); break;
+    
+    case '#': password.reset(); delay(1); break;
+    
+    case '0': lock(); kp = false; dp = false; fn = false; nm = false;
+     
+     default: password.append(eKey); delay(1);
+}
+}
+}
+
+boolean array_cmp(uint8_t *a, uint8_t *b, int len_a, int len_b){
+     int n;
+
+     // if their lengths are different, return false
+     if (len_a != len_b) return false;
+
+     // test each element to be the same. if not, return false
+     for (n=0;n<len_a;n++) if (a[n]!=b[n]) return false;
+
+     //ok, if we have not returned yet, they are equal :)
+     return true;
+}
+
+void RFID (){
+boolean success;
+  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
+  uint8_t uidLength;        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
+  //String s = "";
+  uint8_t key[] = {165, 189, 171, 144};
+  
+  // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
+  // 'uid' will be populated with the UID, and uidLength will indicate
+  // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
+  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, &uid[0], &uidLength);
+  
+  if (success) {
+    Serial.println("Found a card!");
+    Serial.print("UID Length: ");Serial.print(uidLength, DEC);Serial.println(" bytes");
+    Serial.print("UID Value: ");
+    
+    for (uint8_t i=0; i < uidLength; i++) 
+    {
+     
+      Serial.println(uid[i]);
+      if (array_cmp(uid, key, 4, 4) == true){
+          Serial.print("Access Granted");
+          lcd.print("Access Granted");
+      delay(1000);
+      lcd.clear();
+          unlock();
+     }
+     else {
+      Serial.print("Wrong RFID");
+      lcd.print("Wrong RFID");
+      delay(1000);
+      lcd.clear();
+      kp = false;
+      dp = false;
+      fn = false;
+      nm = false;
+     }
+     
+
+     
+      }
+     
+    //compare s to allowed string
+   
+    Serial.println("");
+  // Wait 1 second before continuing
+  delay(100);
+  }
+  else
+  {
+    // PN532 probably timed out waiting for a card
+    Serial.println("Timed out waiting for a card");
+    kp = false;
+      dp = false;
+      fn = false;
+      nm = false;
+    
+  }
+  
+}
